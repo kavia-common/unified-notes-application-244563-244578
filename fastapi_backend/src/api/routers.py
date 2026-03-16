@@ -26,8 +26,17 @@ router = APIRouter(prefix="/api", tags=["API"])
 # --- AUTH ---
 
 auth_router = APIRouter(prefix="/auth", tags=["Authentication"])
-@auth_router.post("/register", response_model=UserOut, summary="Register", description="Register a new user")
-def register(user_in: UserCreate, db: Session = Depends(get_db)):
+
+from fastapi import Body
+from fastapi.responses import JSONResponse
+
+# Unify registration/sign-up contract
+@auth_router.post("/register", summary="Register", description="Register a new user")
+@auth_router.post("/signup", summary="Sign Up", description="Sign up (alias for register)")
+def register(
+    user_in: UserCreate = Body(...),
+    db: Session = Depends(get_db)
+):
     if db.query(User).filter(User.email == user_in.email).first():
         raise HTTPException(status_code=409, detail="Email already registered")
     user = User(
@@ -37,10 +46,21 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    return user
+    access_token = create_access_token(
+        data={"user_id": user.id, "sub": user.email},
+        expires_delta=timedelta(hours=12)
+    )
+    # Match frontend: return access_token and user dict (id, email, is_active, created_at)
+    user_out = {
+        "id": user.id,
+        "email": user.email,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat() if hasattr(user.created_at, "isoformat") else user.created_at,
+    }
+    return {"access_token": access_token, "user": user_out}
 
-@auth_router.post("/login", response_model=Token, summary="Login", description="Authenticate user and return JWT")
-def login(form_data: UserCreate, db: Session = Depends(get_db)):
+@auth_router.post("/login", summary="Login", description="Authenticate user and return JWT")
+def login(form_data: UserCreate = Body(...), db: Session = Depends(get_db)):
     user = authenticate_user(db, form_data.email, form_data.password)
     if not user:
         raise HTTPException(status_code=400, detail="Incorrect email or password")
@@ -48,7 +68,13 @@ def login(form_data: UserCreate, db: Session = Depends(get_db)):
         data={"user_id": user.id, "sub": user.email},
         expires_delta=timedelta(hours=12)
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    user_out = {
+        "id": user.id,
+        "email": user.email,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat() if hasattr(user.created_at, "isoformat") else user.created_at,
+    }
+    return {"access_token": access_token, "user": user_out}
 
 @auth_router.get("/me", response_model=UserOut, summary="Get My Profile")
 def get_me(current_user: User = Depends(get_current_user)):
